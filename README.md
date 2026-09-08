@@ -116,7 +116,7 @@ before running anything (marked `# CONFIRM` in the script):
 |---|---|
 | `WebRootPath` | Step 1 above |
 | `KeytoolPath` | `Get-ChildItem ... -Recurse -Filter keytool.exe` |
-| `KeystorePath` | Already confirmed from `destiny.xml`: `D:/Follett/FSC-Cert/destiny.keystore` |
+| `KeystorePath` | Confirmed from `destiny.xml`: `../FSC-Cert/destiny.keystore` |
 | `KeystoreAlias` | `& $KeytoolPath -list -keystore <path> -storepass <pass>` — look for the `PrivateKeyEntry` alias |
 | `ServiceName` | `Get-Service *destiny*, *wildfly*` |
 | `SmtpServer` / `MailTo` | Your relay + who should get alerts |
