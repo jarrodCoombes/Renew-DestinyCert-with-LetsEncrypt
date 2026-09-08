@@ -43,7 +43,7 @@ cd ..\Scripts\DestinyCertRenew
 Leave off `-DenyInteractiveLogon` for now — you'll need this account to
 log on interactively for testing in Phase 5. Add that hardening in
 Phase 11, once everything's confirmed working through the scheduled
-task instead.
+task instead. 
 
 **Gate** — verify each grant landed:
 
@@ -64,10 +64,10 @@ confident everything works.
 ## Phase 3 — Confirm the real keystore password (as admin, read-only)
 
 ```powershell
-& '..\FSC-Destiny\java\bin\keytool.exe' -list -keystore '..\FSC-Cert\destiny.keystore' -storepass 'password'
+& '..\FSC-Destiny\java\bin\keytool.exe' -list -keystore '..\FSC-Cert\destiny.keystore' -storepass '<password>'
 ```
 
-- **Lists an entry** → that's the confirmed real password (matches
+- **Lists an entry** → that's the confirmed real <password> (matches
   `destiny.xml`'s `credential-reference`); note the alias shown too.
 - **"password was incorrect"** → stop here. Get the actual password from
   wherever it's documented before continuing — don't guess in Phase 5.
@@ -99,10 +99,19 @@ runas /user:YOURDOMAIN\svc-destiny-cert powershell
 
 If that fails with *"the user has not been granted the requested logon
 type"*, this account doesn't have local interactive logon rights on your Destiny server
-(common under a hardened GPO). Temporarily grant it via
-`secpol.msc` → Local Policies → User Rights Assignment → **Log on
-locally** → add the account, retry `runas`, then **remove it again**
-after Phase 8 — ongoing operation only needs the batch-logon right
+(common under a hardened GPO).
+
+How to allow this account interactive logon will depend on your
+environment. In and AD environment this will most likely mean editing a GPO and
+forcing and update via `gpupdate` for a single unbound server, the `secpol.msc` 
+will be were you'd set this policy for this user.
+
+To temporarily grant it on a stand alone server:
+* Run `secpol.msc` → Local Policies → User Rights Assignment → **Log on
+locally** → add the account
+* Retry the `runas` command 
+
+**Remove this right** after Phase 8 — ongoing operation only needs the batch-logon right
 already granted in Phase 2, not interactive.
 
 **In the new window (now running as svc-destiny-cert):**
@@ -140,9 +149,9 @@ reverting your XML edit.
 and expect this to fail — `Test-ChallengeWebroot` calls `New-Item -Force`
 on that path if it's missing, so it would silently recreate the folder
 and the check would pass right through, proving nothing. Instead, break
-something the script *can't* self-heal: stop the service itself. This
-is fully safe and trivially reversible — no files or config touched.
+something the script *can't* self-heal
 
+#Break Test 1: Stop the Destiny service manually.
 As admin:
 
 ```powershell
@@ -153,6 +162,37 @@ Then, as the service account:
 
 ```powershell
 .\Renew-DestinyCert.ps1 -Staging -Force -Verbose
+```
+Then restore immediately:
+
+```powershell
+Start-Service -Name Destiny
+Get-Service -Name Destiny   # confirm Running before continuing
+```
+
+#Break Test 2: Rename the `destiny.xml` file
+**Prove the config-drift check itself fires** (the
+`destiny.xml`-content check, as distinct from the live-serving check
+above). This renames the file itself rather than editing its contents,
+so there's nothing to get wrong restoring it:
+
+```powershell
+# As admin
+Rename-Item ..\FSC-Destiny\wildfly\standalone\configuration\destiny.xml destiny.xml.bak
+```
+
+```powershell
+# As the service account
+.\Renew-DestinyCert.ps1 -Staging -Force -Verbose
+# Expect PRECHECK FAILED here too -- this time from the config check,
+# since Test-WellKnownConfig can't find the file at all.
+```
+
+```powershell
+# As admin -- restore immediately, then confirm Destiny is still fine
+# (it wasn't restarted by any of this, so it shouldn't need anything,
+# but worth a sanity browse to https://destiny.yourdistrict.org anyway)
+Rename-Item ..\FSC-Destiny\wildfly\standalone\configuration\destiny.xml.bak destiny.xml
 ```
 
 **Gate**, confirm all three:
@@ -167,34 +207,6 @@ Then, as the service account:
   confirm the alert transport itself if you'd rather isolate that from
   this test.
 
-Then restore immediately:
-
-```powershell
-Start-Service -Name Destiny
-Get-Service -Name Destiny   # confirm Running before continuing
-```
-
-**Optional — also prove the config-drift check itself fires** (the
-`destiny.xml`-content check, as distinct from the live-serving check
-above). This renames the file itself rather than editing its contents,
-so there's nothing to get wrong restoring it:
-
-```powershell
-# As admin
-Rename-Item ..\FSC-Destiny\wildfly\standalone\configuration\destiny.xml destiny.xml.bak
-```
-```powershell
-# As the service account
-.\Renew-DestinyCert.ps1 -Staging -Force -Verbose
-# Expect PRECHECK FAILED here too -- this time from the config check,
-# since Test-WellKnownConfig can't find the file at all.
-```
-```powershell
-# As admin -- restore immediately, then confirm Destiny is still fine
-# (it wasn't restarted by any of this, so it shouldn't need anything,
-# but worth a sanity browse to https://destiny.yourdistrict.org anyway)
-Rename-Item ..\FSC-Destiny\wildfly\standalone\configuration\destiny.xml.bak destiny.xml
-```
 
 ## Phase 8 — Staging dry run (real end-to-end test) ⚠️ maintenance window
 
@@ -260,13 +272,16 @@ renewal is actually due.
 
 Now that everything's proven working through the scheduled task alone:
 
+For a stand alone server:
+
 ```powershell
 .\Grant-DestinyCertAccountPermissions.ps1 -AccountName 'YOURDOMAIN\svc-destiny-cert' -DenyInteractiveLogon
 ```
 
 (Safe to re-run — it skips rights already granted and just adds the two
 deny rights.) If you temporarily granted "Log on locally" in Phase 5,
-remove that too via `secpol.msc` — it isn't touched by this script.
+remove that too via `secpol.msc` — it isn't touched by this script. Or if you used
+an AD GPO, you can undo the permission there and force another GPO update via `gpupdate`
 
 ## Ongoing
 
