@@ -122,7 +122,7 @@ before running anything (marked `# CONFIRM` in the script):
 | `SmtpServer` / `MailTo` | Your relay + who should get alerts |
 
 Note on `destiny.xml`'s TLS config: it uses `credential-reference
-clear-text="password"` for both the keystore-level and key-level password
+clear-text="<password>"` for both the keystore-level and key-level password
 under `applicationKS`/`applicationKM`. In a Java keystore these are two
 separate values (`storepass` and `keypass`) — they just happen to be
 identical in your config. `Renew-DestinyCert.ps1` sets both from the one
