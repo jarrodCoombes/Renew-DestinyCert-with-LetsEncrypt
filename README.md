@@ -124,22 +124,16 @@ before running anything (marked `# CONFIRM` in the script):
 Note on `destiny.xml`'s TLS config: it uses `credential-reference
 clear-text="<password>"` for both the keystore-level and key-level password
 under `applicationKS`/`applicationKM`. In a Java keystore these are two
-separate values (`storepass` and `keypass`) — they just happen to be
-identical in your config. `Renew-DestinyCert.ps1` sets both from the one
+separate values (`storepass` and `keypass`) — for the purposes of these 
+scripts we will keep them the same. `Renew-DestinyCert.ps1` sets both from the one
 value you save via `Save-Secret.ps1 -SecretName KeystorePass`, matching
-that. **Worth flagging**: if that config wasn't sanitized before being
-shared, `password` may be the literal current value, not a placeholder —
-same category of issue as the DB credential noted below. Worth confirming
-and rotating if so (you'd need to re-password the existing keystore with
-`keytool -storepasswd`/`-keypasswd` and update `destiny.xml`'s
-`credential-reference` to match before the next scheduled run, or the
-service will fail to start against the new keystore).
+that.
 
 **Decide who runs this.** See the "Service account & minimal permissions"
 section below — create a dedicated low-privilege account there before
 continuing, rather than using your own admin login.
 
-Log in **as that account** (or `runas`) and save secrets — this matters
+Log in **as that account** (or `runas.exe /user:<account> powershell`) and save secrets — this matters
 because the secrets are DPAPI-protected to the exact account that saves
 them:
 
@@ -385,7 +379,7 @@ and this repo's `.gitignore`.
 
 ## Tested against
 
-Windows Server 2022, Destiny running on WildFly/JBoss (the modern
+Windows Server 2022, Destiny 23.5.0-RC5 running on WildFly/JBoss (the modern
 Destiny stack — this won't apply to older Tomcat-based installs without
 adaptation), Posh-ACME 4.34.0. Built and hardened through a real
 production rollout, including the mistakes made along the way — see
