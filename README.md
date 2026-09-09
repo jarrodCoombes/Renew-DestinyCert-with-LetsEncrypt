@@ -74,6 +74,11 @@ is the single most common reason this will fail.
 
 ## Why this approach
 
+Why not just put Destiny behind a reverse proxy? While this would probably work, it is an
+unsupported setup and Follett support will most likely insist on a direct connection in order to
+troubleshoot or fix things. This method requires a neglible change to the Destiny install itself,
+leaving the bulk of the process at the OS level.
+
 Posh-ACME's built-in `WebRoot` plugin does nothing more than write a file
 to that path and delete it after — no DNS API, no TSIG key, no
 credentials beyond what's already on the filesystem.
