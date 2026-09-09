@@ -44,7 +44,9 @@ Some thing worth keeping in mind long-term:
   will respect your changes in upcoming updates. So make a backup of the original file as 
   well as your edited one.
 
-## Prerequisite: get WildFly serving `/.well-known` from disk
+----
+
+## Prerequisite 1: Get WildFly serving `/.well-known` from disk
 
 Destiny's default `destiny.xml` doesn't serve anything at
 `/.well-known/acme-challenge/`, which is where Let's Encrypt's HTTP-01
@@ -70,18 +72,17 @@ and find the `<handlers>` block and add a matching `<file>` handler:
     <file name="well-known-handler" path="${jboss.home.dir}/.well-known" directory-listing="false"/>   <!-- add this line -->
 </handlers>
 ```
-**NOTE** The path variable uses the Linux / rather than the Windows \, 
-using the wrong slash won't break anything, it just won't server up the folder via the web.
+**NOTE:** The path variable uses the Linux slash "/" rather than the Windows slash "\\", 
+using the wrong slash won't break anything, it just won't serve up the folder via the web.
 
 Restart the Destiny service after editing, then confirm it worked before
 going any further — drop a test file in the folder this now maps to
-(`<jboss.home.dir>\.well-known\test.txt`) and confirm you can fetch it
-over plain HTTP, both from the server itself and from outside your
-network (a mobile hotspot works, or `curl --resolve` against your public
-IP directly):
+(`${jboss.home.dir}\.well-known\test.txt`) and confirm you can fetch it
+over plain HTTP, from outside your network (a mobile hotspot works, or 
+`curl --resolve` against your public IP directly):
 
 ```powershell
-curl -Iv http://destiny.yourdistrict.org/.well-known/test.txt
+curl -Iv --resolve destiny.yourdistrict.org:80:0.0.0.0 http://destiny.yourdistrict.org/.well-known/test.txt
 ```
 
 You should get a direct `200 OK`, not a redirect — `.well-known` isn't
@@ -91,139 +92,9 @@ constraint. If you get anything else, don't move on until this part
 works — everything downstream depends on it, and a broken challenge path
 is the single most common reason this will fail.
 
-## 1. Confirm the webroot path
+## Prerequisite 2: Service account & minimal permissions
 
-Filesystem path serving `/.well-known/acme-challenge/`:
-`<jboss.home.dir>\.well-known\acme-challenge` (typically
-`..\FSC-Destiny\wildfly\.well-known\acme-challenge`).
-`WebRootPath` in `Renew-DestinyCert.ps1` should be set to its **parent**
-(e.g. `..\FSC-Destiny\wildfly`), since the `WebRoot` plugin
-appends `\.well-known\acme-challenge` itself by default.
-
-## 2. Windows setup — one time
-
-```powershell
-# As Administrator
-Install-Module -Name Posh-ACME -Scope AllUsers -Force
-Import-Module Posh-ACME
-
-New-Item -ItemType Directory -Path ..\Scripts\DestinyCertRenew -Force
-New-Item -ItemType Directory -Path ..\Scripts\DestinyCertRenew\secrets -Force
-```
-
-Copy `Renew-DestinyCert.ps1` and `Save-Secret.ps1` into
-`..\Scripts\DestinyCertRenew\`.
-
-**Confirm and edit these values at the top of `Renew-DestinyCert.ps1`**
-before running anything (marked `# CONFIRM` in the script):
-
-| Setting | How to find it |
-|---|---|
-| `WebRootPath` | Step 1 above |
-| `KeytoolPath` | `Get-ChildItem ... -Recurse -Filter keytool.exe` |
-| `KeystorePath` | Confirmed from `destiny.xml`: `../FSC-Cert/destiny.keystore` |
-| `KeystoreAlias` | `& $KeytoolPath -list -keystore <path> -storepass <pass>` — look for the `PrivateKeyEntry` alias |
-| `ServiceName` | `Get-Service *destiny*, *wildfly*` |
-| `SmtpServer` / `MailTo` | Your relay + who should get alerts |
-
-Note on `destiny.xml`'s TLS config: it uses `credential-reference
-clear-text="<password>"` for both the keystore-level and key-level password
-under `applicationKS`/`applicationKM`. In a Java keystore these are two
-separate values (`storepass` and `keypass`) — for the purposes of these 
-scripts we will keep them the same. `Renew-DestinyCert.ps1` sets both from the one
-value you save via `Save-Secret.ps1 -SecretName KeystorePass`, matching
-that.
-
-**Decide who runs this.** See the "Service account & minimal permissions"
-section below — create a dedicated low-privilege account there before
-continuing, rather than using your own admin login.
-
-Log in **as that account** (or `runas.exe /user:<account> powershell`) and save secrets — this matters
-because the secrets are DPAPI-protected to the exact account that saves
-them:
-
-```powershell
-.\Save-Secret.ps1 -SecretName PfxPass        # any strong password Posh-ACME will use internally for the PFX
-.\Save-Secret.ps1 -SecretName KeystorePass   # Destiny's EXISTING java keystore password (see note above)
-.\Save-Secret.ps1 -SecretName SmtpCred       # only if your relay requires auth
-.\Save-Secret.ps1 -SecretName GoogleChatWebhook   # only if using the Google Chat alert channel, see below
-```
-
-## Alert channels: email and/or Google Chat
-
-Two independent channels, toggled separately in the `$Config` block:
-
-```powershell
-AlertViaEmail        = $true
-AlertViaGoogleChat   = $false
-```
-
-Both, either one alone, or neither can be enabled. Both a success and a
-failure alert (when they fire) go out through every channel currently
-toggled on.
-
-**Setting up Google Chat**: in the target Space, go to the Space name ▸
-**Apps & integrations** ▸ **Webhooks** ▸ **Add a webhook**, name it
-something like "Destiny Cert Renewal," and copy the generated URL. Save
-it the same way as the other secrets:
-
-```powershell
-.\Save-Secret.ps1 -SecretName GoogleChatWebhook
-```
-
-Treat that URL as a credential — anyone holding it can post into that
-Space, which is why it's stored the same DPAPI-protected way as the
-passwords rather than sitting in the config in plain text.
-
-### Testing a channel without running a renewal
-
-`-TestAlert` sends a test message and exits immediately — no Posh-ACME,
-no keystore, no pre-flight checks, no service restart, nothing else
-touched. It also **ignores** the `AlertViaEmail`/`AlertViaGoogleChat`
-toggles, so you can verify a channel works before deciding whether to
-turn it on for real alerts:
-
-```powershell
-.\Renew-DestinyCert.ps1 -TestAlert -TestChannel Email
-.\Renew-DestinyCert.ps1 -TestAlert -TestChannel GoogleChat
-.\Renew-DestinyCert.ps1 -TestAlert                          # both (default)
-```
-
-Check the log for a per-channel success/failure line — a channel can
-fail independently of the other, so `Both` will tell you exactly which
-one has a problem if only one does.
-
-## 3. Dry run against LE staging
-
-Always test against the staging CA first — production LE has real rate
-limits (5 failed validations/hour, 5 duplicate certs/week).
-
-```powershell
-.\Renew-DestinyCert.ps1 -Staging -Force -Verbose
-```
-
-Check the log in `..\Scripts\DestinyCertRenew\Logs\`. A staging cert isn't
-trusted by browsers, so this will show a scary warning if you browse to
-Destiny during the test — that's expected. Confirm:
-- Posh-ACME's log shows the challenge file being written and the
-  authorization going `valid`
-- `keytool` converted and the alias matches
-- The service restarted cleanly
-- You got the success email
-
-## 4. Go live
-
-```powershell
-.\Renew-DestinyCert.ps1 -Force -Verbose
-```
-
-This issues a real cert and deploys it. Browse to
-`https://destiny.yourdistrict.org` and confirm the padlock shows a valid Let's
-Encrypt certificate.
-
-## Service account & minimal permissions
-
-This is deliberately **not** run as local admin. The account that runs
+This script is deliberately **not** run as local admin. The account that runs
 the scheduled task gets exactly five things, nothing more:
 
 | Resource | Access | Why |
@@ -241,7 +112,12 @@ logon, RDP, `SERVICE_CHANGE_CONFIG` on the service (so it can't be used
 to repoint the service at a different binary), or write access to
 anything outside the five paths above.
 
-### 1. Create the account
+A note about interactive logon for this account: You will want to enable this for deployment and testing,
+but once everything is in place, you can remove this right from the account.
+
+For the purposes of this documenation we will assume the service account is `svc-destiny-cert`
+
+#### 1. Create the account
 
 Local account (simplest, if you don't need it centrally managed via AD):
 
@@ -262,7 +138,7 @@ Either way: **do not** add it to `Administrators`, `Domain Admins`, or
 any other privileged group. It doesn't need to be, and that's the whole
 point of the rest of this section.
 
-### 2. Grant it exactly the rights above
+#### 2. Grant it exactly the rights above
 
 ```powershell
 # On your Destiny server, as admin -- run once
@@ -274,13 +150,13 @@ point of the rest of this section.
 Add `-DenyInteractiveLogon` if you want the extra hardening of explicitly
 blocking this account from ever logging in interactively or over RDP —
 recommended, since it means a leaked password is only useful for running
-the scheduled task, nothing else.
+the scheduled task, nothing else. This probably won't work in an AD environment.
 
 This script backs up the Destiny service's current ACL to
 `%TEMP%\<ServiceName>.sddl.backup.txt` before touching it, in case you
 ever need to revert with `sc.exe sdset <name> "<saved SDDL>"`.
 
-### 3. Verify
+#### 3. Verify
 
 ```powershell
 # Confirm no group memberships beyond the defaults
@@ -291,15 +167,151 @@ Get-LocalGroupMember Administrators | Where-Object Name -like '*svc-destiny-cert
 sc.exe sdshow FollettDestinyService
 ```
 
-Then log in **as** `svc-destiny-cert` (or `runas /user:YOURDOMAIN\svc-destiny-cert powershell`),
+## Step 1. Confirm the needed paths and other details
+
+| Setting | How to find it |
+|---|---|
+| `WebRootPath` | `${jboss.home.dir}` in the destiny.xml file, typically `..\FSC-Destiny\wildfly` |
+| `KeytoolPath` | `Get-ChildItem ... -Recurse -Filter keytool.exe` |
+| `KeystorePath` | Confirmed from `destiny.xml`: `../FSC-Cert/destiny.keystore` |
+| `KeystoreAlias` | `& $KeytoolPath -list -keystore <path> -storepass <pass>` — look for the `PrivateKeyEntry` alias |
+| `ServiceName` | `Get-Service *destiny*, *wildfly*` |
+| `SmtpServer` / `MailTo` | Your relay + who should get alerts |
+| `KeystorePass` | Can be found in the `destiny.xml` file - look for `credential-reference clear-text=` |
+
+Note on `destiny.xml`'s TLS config: it uses `credential-reference
+clear-text="<password>"` for both the keystore-level and key-level password
+under `applicationKS`/`applicationKM`. In a Java keystore these are two
+separate values (`storepass` and `keypass`) — for the purposes of these 
+scripts we will keep them the same. `Renew-DestinyCert.ps1` sets both from the one
+value you save via `Save-Secret.ps1 -SecretName KeystorePass`, matching
+that.
+
+## Step 2. Windows and script setup — one time
+
+```powershell
+# As Administrator
+Install-Module -Name Posh-ACME -Scope AllUsers -Force
+Import-Module Posh-ACME
+
+New-Item -ItemType Directory -Path ..\Scripts\DestinyCertRenew -Force
+New-Item -ItemType Directory -Path ..\Scripts\DestinyCertRenew\secrets -Force
+```
+
+Copy all the ps1 scripts into a folder of your choice (suggest: `..\Scripts\DestinyCertRenew\`).
+
+**Before running anything**
+Using the table in Step 1, edit each script:
+* Look for `..\` and replace the placeholder paths with the actual paths on your server in all 4 scripts.
+* Confirm and edit the values from the table in Step 1 at the top of `Renew-DestinyCert.ps1`
+  * Note: `WebRootPath` in `Renew-DestinyCert.ps1` should be set to its **parent**
+(e.g. `..\FSC-Destiny\wildfly`), since the `WebRoot` plugin appends `\.well-known\acme-challenge` itself by default.
+
+**Decide who runs this.** See the "Service account & minimal permissions"
+section above — create a dedicated low-privilege account there before
+continuing, rather than using your own admin login.
+
+Log in **as that account** (or `runas.exe /user:svc-destiny-cert powershell`) and save secrets — this matters
+because the secrets are DPAPI-protected to the exact account that saves them:
+
+```powershell
+# As Service Account
+.\Save-Secret.ps1 -SecretName PfxPass        # any strong password Posh-ACME will use internally for the PFX
+.\Save-Secret.ps1 -SecretName KeystorePass   # Destiny's EXISTING java keystore password (see note above)
+.\Save-Secret.ps1 -SecretName SmtpCred       # only if your relay requires auth
+.\Save-Secret.ps1 -SecretName GoogleChatWebhook   # only if using the Google Chat alert channel, see below
+```
+
+#### Alert channels: email and/or Google Chat
+
+Two independent channels, toggled separately in the `$Config` block:
+
+```powershell
+AlertViaEmail        = $true
+AlertViaGoogleChat   = $false
+```
+
+Both, either one alone, or neither can be enabled. Both a success and a
+failure alert (when they fire) go out through every channel currently
+toggled on.
+
+**Setting up Google Chat**: in the target Space, go to the Space name ▸
+**Apps & integrations** ▸ **Webhooks** ▸ **Add a webhook**, name it
+something like "Destiny Cert Renewal," and copy the generated URL. Save
+it the same way as the other secrets:
+
+```powershell
+# As Service Account
+.\Save-Secret.ps1 -SecretName GoogleChatWebhook
+```
+
+Treat that URL as a credential — anyone holding it can post into that
+Space, which is why it's stored the same DPAPI-protected way as the
+passwords rather than sitting in the config in plain text.
+
+#### Testing a channel without running a renewal
+
+`-TestAlert` sends a test message and exits immediately — no Posh-ACME,
+no keystore, no pre-flight checks, no service restart, nothing else
+touched. It also **ignores** the `AlertViaEmail`/`AlertViaGoogleChat`
+toggles, so you can verify a channel works before deciding whether to
+turn it on for real alerts:
+
+```powershell
+# As Service account or Admin Account
+.\Renew-DestinyCert.ps1 -TestAlert -TestChannel Email
+.\Renew-DestinyCert.ps1 -TestAlert -TestChannel GoogleChat
+.\Renew-DestinyCert.ps1 -TestAlert                          # both (default)
+```
+
+Check the log for a per-channel success/failure line — a channel can
+fail independently of the other, so `Both` will tell you exactly which
+one has a problem if only one does.
+
+## Step 3. Dry run against LE staging
+
+**This will restart the Destiny Service and replace your production cert with a stagin cert from LE** so plan accordingly.
+
+Log in **as** the service account (`runas /user:svc-destiny-cert powershell`),
 run `Save-Secret.ps1`, and do the staging dry run from that session — if
 any permission is missing, it'll surface there rather than silently in
 the middle of the night.
 
-## 5. Schedule it
+Always test against the staging CA first — production LE has real rate
+limits (5 failed validations/hour, 5 duplicate certs/week).
 
 ```powershell
-.\Register-ScheduledTask.ps1 -ServiceAccount 'YOURDOMAIN\svc-destiny-cert'
+# As Service Account
+.\Renew-DestinyCert.ps1 -Staging -Force -Verbose
+```
+
+Check the log in `..\Scripts\DestinyCertRenew\Logs\`. A staging cert isn't
+trusted by browsers, so this will show a scary warning if you browse to
+Destiny during the test — that's expected. Confirm:
+- Posh-ACME's log shows the challenge file being written and the
+  authorization going `valid`
+- `keytool` converted and the alias matches
+- The service restarted cleanly
+- You got the success email
+
+## Step 4. Go live
+
+```powershell
+# As Service Account
+.\Renew-DestinyCert.ps1 -Force -Verbose
+```
+
+This issues a real cert and deploys it. Browse to
+`https://destiny.yourdistrict.org` and confirm the padlock shows a valid Let's
+Encrypt certificate.
+
+## Step 5. Schedule it
+
+You will need the password for the service account for this step.
+
+```powershell
+#As Admin account
+.\Register-ScheduledTask.ps1 -ServiceAccount 'svc-destiny-cert'
 ```
 
 Default: every 2 weeks, Mondays at 3:15 AM (`-WeeksInterval`/`-DayOfWeek`/
@@ -308,6 +320,11 @@ within its ~30-day-before-expiry window, most of these runs are cheap
 no-ops (logged as `SKIPPED`) — a biweekly cadence still leaves 2+ check-in
 opportunities before expiry even if one run fails for some reason, while
 generating a fraction of the log files a daily trigger would.
+
+
+----------------------
+
+# Script Features
 
 ## Pre-flight check (config-drift protection)
 
@@ -345,7 +362,9 @@ Email alerts fire automatically on any `FAILURE`, and (optionally) on
 every `SUCCESS` — edit the `Send-AlertEmail` calls near the bottom of the
 script if you'd rather only be notified on failure.
 
-## Troubleshooting
+----
+
+# Troubleshooting Tips
 
 - **"PRECHECK FAILED" in the alert email/log** — see the "Pre-flight
   check" section above; the message tells you whether it was the XML
@@ -393,6 +412,12 @@ production rollout, including the mistakes made along the way — see
 If you hit something that doesn't match your install (different default
 paths, a different Destiny version's `destiny.xml` structure, etc.),
 issues and PRs are welcome.
+
+## AI Disclosure
+
+I used AI to help with writing these scripts, mostly for syntax clarification
+bug testing and documentation. The idea behind this project was entirely my own,
+as was the POC needed to validate that this idea would work.
 
 ## License
 
