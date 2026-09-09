@@ -25,6 +25,25 @@ Wherever possible I have tried to use at least part of the typical path Destiny 
 - `RUNBOOK.md` — a phase-by-phase go-live checklist with test gates
   between each step
 
+## Why this approach
+
+Why not just put Destiny behind a reverse proxy? While this would probably work, it is an
+unsupported setup and Follett support will most likely insist on a direct connection in order to
+troubleshoot or fix things. This method requires a neglible change to the Destiny install itself,
+leaving the bulk of the process at the OS level.
+
+Posh-ACME's built-in `WebRoot` plugin does nothing more than write a file
+to that path and delete it after — no DNS API, no TSIG key, no
+credentials beyond what's already on the filesystem.
+
+Some thing worth keeping in mind long-term: 
+* This all depends on port 80 staying forwarded to this server from the internet, even 
+  though nothing else here needs it. If that forwarding ever gets "cleaned up" later (reasoning 
+  "we only need 443, right?"), renewals will silently start failing at the next attempt.
+* Editing the XML file is risky, but also fragile as there is no guarantee that Follett 
+  will respect your changes in upcoming updates. So make a backup of the original file as 
+  well as your edited one.
+
 ## Prerequisite: get WildFly serving `/.well-known` from disk
 
 Destiny's default `destiny.xml` doesn't serve anything at
@@ -71,25 +90,6 @@ applies to locations under a `CONFIDENTIAL` transport-guarantee
 constraint. If you get anything else, don't move on until this part
 works — everything downstream depends on it, and a broken challenge path
 is the single most common reason this will fail.
-
-## Why this approach
-
-Why not just put Destiny behind a reverse proxy? While this would probably work, it is an
-unsupported setup and Follett support will most likely insist on a direct connection in order to
-troubleshoot or fix things. This method requires a neglible change to the Destiny install itself,
-leaving the bulk of the process at the OS level.
-
-Posh-ACME's built-in `WebRoot` plugin does nothing more than write a file
-to that path and delete it after — no DNS API, no TSIG key, no
-credentials beyond what's already on the filesystem.
-
-Some thing worth keeping in mind long-term: 
-* This all depends on port 80 staying forwarded to this server from the internet, even 
-  though nothing else here needs it. If that forwarding ever gets "cleaned up" later (reasoning 
-  "we only need 443, right?"), renewals will silently start failing at the next attempt.
-* Editing the XML file is risky, but also fragile as there is no guarantee that Follett 
-  will respect your changes in upcoming updates. So make a backup of the original file as 
-  well as your edited one.
 
 ## 1. Confirm the webroot path
 
